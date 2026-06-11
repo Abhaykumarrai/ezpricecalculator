@@ -26,7 +26,7 @@ export interface ComponentSetting {
   aiSubFeatures?: AiSubFeaturesEnabled;
 }
 
-export const DEFAULT_COMPONENTS: Record<ComponentKey, ComponentSetting> = {
+export const DEFAULT_COMPONENTS = {
   parsing: { enabled: true, price: 1.6, quantity: 300 },
   aiFeatures: {
     enabled: true,
@@ -276,6 +276,7 @@ export const COMPONENT_META: Record<ComponentKey, ComponentMeta> = {
     valueStep: 10,
     rateLabel: "per/CV",
     rateStep: 0.01,
+    supportsDistribution: false,
   },
   aiFeatures: {
     label: "AI Features",
