@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ezrecruit — Per-User Cost Calculator</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <header class="app-header">
+    <div class="header-inner">
+      <h1>Ezrecruit Cost Calculator</h1>
+    </div>
+  </header>
+
+  <main>
+    <div class="layout layout-split">
+      <section class="panel config-col">
+        <div id="configTableWrap"></div>
+        <div class="config-add-section">
+          <div class="config-add-label">Add component</div>
+          <div class="component-select-grid" id="componentSelectGrid"></div>
+        </div>
+      </section>
+
+      <section class="panel panel-highlight preview-col">
+        <div class="breakdown-header">
+          <div class="section-label" style="margin-bottom:0">Preview</div>
+        </div>
+
+        <div class="margin-enable-row">
+          <label class="switch" aria-label="Enable margin">
+            <input type="checkbox" id="marginEnabledToggle">
+            <span class="switch-slider"></span>
+          </label>
+          <span class="margin-enable-label">Add margin</span>
+        </div>
+
+        <div id="marginConfigWrap" style="display:none">
+          <table class="breakdown-table margin-table">
+            <tbody>
+              <tr class="margin-config-row">
+                <td>Margin</td>
+                <td>
+                  <div class="margin-row-controls">
+                    <div class="tab-group tab-group-inline" id="marginTabs">
+                      <button class="tab-btn active" data-tab="rupee" type="button">₹ Margin</button>
+                      <button class="tab-btn" data-tab="percent" type="button">% Margin</button>
+                    </div>
+                    <input type="number" class="input-field preview-margin-input" id="marginInput" value="40" min="0" step="1">
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div id="previewTableWrap">
+          <table class="breakdown-table">
+            <thead>
+              <tr>
+                <th>Cost Component</th>
+                <th>Per User/Mo</th>
+              </tr>
+            </thead>
+            <tbody id="breakdownBody"></tbody>
+          </table>
+        </div>
+        <div class="quantity-empty preview-empty" id="previewEmpty" style="display:none">Add components to see the cost preview.</div>
+      </section>
+    </div>
+  </main>
+
+  <div id="appToast" class="app-toast" role="status" aria-live="polite"></div>
+
+  <script>
+    const AI_SEARCH_PER_QUERY_COST = 0.17 + 0.1 + 0.00002;
+
+    const CONVERSATIONAL_AI_AVG_INPUT_TOKENS = 3000;
+    const CONVERSATIONAL_AI_AVG_OUTPUT_TOKENS = 2000;
+    const CLAUDE_HAIKU_45_INPUT_USD_PER_MTOK = 1;
+    const CLAUDE_HAIKU_45_OUTPUT_USD_PER_MTOK = 5;
+    const USD_TO_INR = 84;
+
+    function calcConversationalAiCostInr() {
+      const inputUsd = (CONVERSATIONAL_AI_AVG_INPUT_TOKENS / 1000000) * CLAUDE_HAIKU_45_INPUT_USD_PER_MTOK;
+      const outputUsd = (CONVERSATIONAL_AI_AVG_OUTPUT_TOKENS / 1000000) * CLAUDE_HAIKU_45_OUTPUT_USD_PER_MTOK;
+      return Math.round((inputUsd + outputUsd) * USD_TO_INR * 100) / 100;
+    }
+
+    const CONVERSATIONAL_AI_COST_INR = calcConversationalAiCostInr();
+
+    function calcConversationalChatsFromCredit(creditRs) {
+      if (creditRs <= 0 || CONVERSATIONAL_AI_COST_INR <= 0) return 0;
+      return Math.floor(creditRs / CONVERSATIONAL_AI_COST_INR);
+    }
+
+    const JD_GENERATION_COST_INR = 0.53;
+
+    function calcJdGenerationsFromCredit(creditRs) {
+      if (creditRs <= 0 || JD_GENERATION_COST_INR <= 0) return 0;
+      return Math.floor(creditRs / JD_GENERATION_COST_INR);
+    }
+
+    function calcEffectiveAiCreditPerUser(creditRs, distribution, totalUsers) {
+      if (creditRs <= 0) return 0;
+      if (distribution === 'overall') {
+        return creditRs / Math.max(1, totalUsers);
+      }
+      return creditRs;
+    }
+
+    const DEFAULT_AI_SUB_FEATURES = {
+      jdGeneration: true,
+      aiSearch: true,
+      conversationalAi: true
+    };
+
+    function normalizeAiSubFeatures(enabled) {
+      return Object.assign({}, DEFAULT_AI_SUB_FEATURES, enabled || {});
+    }
+
+    function countEnabledAiSubFeatures(enabled) {
+      const subFeatures = normalizeAiSubFeatures(enabled);
+      return AI_FEATURE_DETAIL_ROWS.filter(function(row) { return subFeatures[row.id]; }).length;
+    }
+
+    const AI_FEATURE_DETAIL_ROWS = [
+      { id: 'jdGeneration', label: 'JD Generation', depth: 0, valueType: 'jdCount', rate: JD_GENERATION_COST_INR, rateNote: 'per JD', countLabel: 'JDs' },
+      { id: 'aiSearch', label: 'AI Search', depth: 0, valueType: 'aiSearchCount', rate: AI_SEARCH_PER_QUERY_COST, rateNote: 'per search query', countLabel: 'search queries' },
+      { id: 'conversationalAi', label: 'Conversational AI', depth: 0, valueType: 'chatCount', rate: CONVERSATIONAL_AI_COST_INR, rateNote: 'per chat', countLabel: 'chats' }
+    ];
+
+    function calcAiSearchesFromCredit(creditRs) {
+      if (creditRs <= 0) return 0;
+      return Math.floor(creditRs / AI_SEARCH_PER_QUERY_COST);
+    }
+
+    function calcAiSubFeatureCounts(creditRs, distribution, totalUsers, enabled) {
+      const subFeatures = normalizeAiSubFeatures(enabled);
+      const effectiveCredit = calcEffectiveAiCreditPerUser(creditRs, distribution || 'perUser', totalUsers);
+      const result = { jdGeneration: 0, aiSearch: 0, conversationalAi: 0 };
+      const enabledRows = AI_FEATURE_DETAIL_ROWS.filter(function(row) { return subFeatures[row.id]; });
+      if (!enabledRows.length || effectiveCredit <= 0) return result;
+      const share = effectiveCredit / enabledRows.length;
+      const calcByType = {
+        jdCount: calcJdGenerationsFromCredit,
+        aiSearchCount: calcAiSearchesFromCredit,
+        chatCount: calcConversationalChatsFromCredit
+      };
+      enabledRows.forEach(function(row) {
+        if (row.valueType && calcByType[row.valueType]) {
+          result[row.id] = calcByType[row.valueType](share);
+        }
+      });
+      return result;
+    }
+
+    function formatTooltipAmount(amount) {
+      if (amount < 0.01) return amount.toFixed(5);
+      return amount.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    }
+
+    function buildAiSubFeatureTooltip(subFeatureId, creditRs, distribution, totalUsers, enabled) {
+      const subFeatures = normalizeAiSubFeatures(enabled);
+      const row = AI_FEATURE_DETAIL_ROWS.find(function(r) { return r.id === subFeatureId; });
+      if (!row || row.rate === undefined) return '';
+
+      const users = Math.max(1, totalUsers);
+      const effectiveCredit = calcEffectiveAiCreditPerUser(creditRs, distribution || 'perUser', totalUsers);
+      const enabledCount = countEnabledAiSubFeatures(subFeatures);
+      const included = subFeatures[subFeatureId];
+      const share = included && enabledCount > 0 ? effectiveCredit / enabledCount : 0;
+      const count = calcAiSubFeatureCounts(creditRs, distribution, totalUsers, subFeatures)[subFeatureId];
+
+      const creditStep = distribution === 'overall'
+        ? 'Per-user credit = ₹' + formatTooltipAmount(creditRs) + ' ÷ ' + users + ' users = ₹' + formatTooltipAmount(effectiveCredit)
+        : 'Per-user credit = ₹' + formatTooltipAmount(effectiveCredit);
+
+      if (!included) {
+        return 'Not included — no count shown. Unchecking redistributes credit to other checked features. ' + creditStep + '.';
+      }
+
+      const shareStep = 'Your share = ₹' + formatTooltipAmount(effectiveCredit) + ' ÷ ' + enabledCount + ' checked = ₹' + formatTooltipAmount(share);
+      const countStep = row.countLabel + ' = floor(₹' + formatTooltipAmount(share) + ' ÷ ₹' + formatTooltipAmount(row.rate) + ') = ' + count;
+
+      const contextById = {
+        jdGeneration: 'Rate: ₹0.53 per JD.',
+        aiSearch: 'Rate: ₹0.27 per search query (Generation ₹0.17 + Extraction ₹0.10 + Embedding ₹0.00002).',
+        conversationalAi: 'Rate: ₹' + formatTooltipAmount(CONVERSATIONAL_AI_COST_INR) + ' per chat (Claude Haiku 4.5, avg 3k in + 2k out tokens).'
+      };
+
+      return contextById[subFeatureId] + ' ' + creditStep + '. ' + shareStep + '. ' + countStep + '.';
+    }
+
+    function formatSubRate(rate) {
+      if (rate < 0.01) return rate.toFixed(5);
+      return rate.toLocaleString('en-IN', { maximumFractionDigits: 2 });
+    }
+
+    function renderAiCalcTooltip(text) {
+      return ' <span class="tooltip-trigger" tabindex="0" aria-label="More info">?<span class="tooltip-text ai-calc-tooltip">' + text + '</span></span>';
+    }
+
+    function renderAiSubRows(setting) {
+      const subFeatures = normalizeAiSubFeatures(setting.aiSubFeatures);
+      const counts = calcAiSubFeatureCounts(
+        setting.price,
+        setting.distribution || 'perUser',
+        state.totalUsers,
+        subFeatures
+      );
+      return AI_FEATURE_DETAIL_ROWS.map(function(row) {
+        const included = subFeatures[row.id];
+        let distributionCell = '';
+        if (included && row.valueType) {
+          distributionCell = '<div class="search-count-cell"><span class="credit-count-badge" data-ai-sub-count="' + row.id + '">' + counts[row.id] + '</span><span class="sheet-cell-suffix">' + row.countLabel + '</span></div>';
+        }
+        let rateCell = '';
+        if (row.rate !== undefined) {
+          rateCell = '<div class="sheet-inline-value config-sub-rate"><span class="sheet-cell-prefix">₹</span><span class="config-sub-rate-value">' + formatSubRate(row.rate) + '</span><span class="sheet-cell-suffix">' + row.rateNote + '</span></div>';
+        } else if (row.rateNote) {
+          rateCell = '<span class="config-sub-rate-note">' + row.rateNote + '</span>';
+        }
+        const tooltip = renderAiCalcTooltip(buildAiSubFeatureTooltip(
+          row.id,
+          setting.price,
+          setting.distribution || 'perUser',
+          state.totalUsers,
+          subFeatures
+        ));
+        const rowClass = included ? 'config-sub-row' : 'config-sub-row is-disabled';
+        const checkbox = '<label class="ai-sub-include"><input type="checkbox" class="ai-sub-checkbox" data-ai-sub-id="' + row.id + '"' + (included ? ' checked' : '') + ' aria-label="Include ' + row.label + '"><span>' + row.label + '</span></label>';
+        return '<tr class="' + rowClass + '"><td class="config-sub-label depth-' + row.depth + '">' + checkbox + tooltip + '</td><td class="config-value"></td><td class="config-rate">' + rateCell + '</td><td class="config-distribution">' + distributionCell + '</td><td></td></tr>';
+      }).join('');
+    }
+
+    function updateAiSearchCountDisplay() {
+      const ai = state.components.aiFeatures;
+      const counts = calcAiSubFeatureCounts(
+        ai.price,
+        ai.distribution || 'perUser',
+        state.totalUsers,
+        ai.aiSubFeatures
+      );
+      document.querySelectorAll('[data-ai-sub-count]').forEach(function(el) {
+        const id = el.getAttribute('data-ai-sub-count');
+        if (id && counts[id] !== undefined) el.textContent = counts[id];
+      });
+    }
+
+    const COMPONENT_META = {
+      parsing: { label: 'Parsing', helper: 'CV parsing volume × rate per CV', hasValue: true, valueMin: 50, valueStep: 10, rateLabel: 'per/CV', rateStep: 0.01, supportsDistribution: false },
+      aiFeatures: { label: 'AI Features', helper: 'JD Generation, AI Search, Conversational AI', hasValue: false, rateLabel: 'Rs Credit', rateStep: 1, supportsDistribution: true },
+      bulkEmail: { label: 'Bulk Email', helper: 'Email volume × rate per email', hasValue: true, valueMin: 1, valueStep: 100, rateLabel: 'per/email', rateStep: 0.001, supportsDistribution: true },
+      xraySearch: { label: 'X-ray Search', helper: 'LinkedIn & profile enrichment search', hasValue: false, rateLabel: 'Per User', rateStep: 1, supportsDistribution: false, addable: false, unavailableMessage: 'X-ray Search is in development. Per search price is not defined yet.' },
+      infra: { label: 'Infra Cost', helper: 'AWS hosting & infrastructure', hasValue: false, rateLabel: 'Per User', rateStep: 1, supportsDistribution: false },
+      customerSupport: { label: 'Customer Support', helper: 'Dedicated support & onboarding', hasValue: false, rateLabel: 'Per User', rateStep: 1, supportsDistribution: false }
+    };
+
+    const COMPONENT_ORDER = ['parsing', 'aiFeatures', 'bulkEmail', 'xraySearch', 'infra', 'customerSupport'];
+
+    const state = {
+      components: {
+        parsing: { enabled: true, price: 1.6, quantity: 300 },
+        aiFeatures: { enabled: true, price: 100, quantity: 1, distribution: 'perUser', aiSubFeatures: Object.assign({}, DEFAULT_AI_SUB_FEATURES) },
+        bulkEmail: { enabled: true, price: 0.038, quantity: 5000, distribution: 'perUser' },
+        xraySearch: { enabled: false, price: 50, quantity: 1 },
+        infra: { enabled: true, price: 50, quantity: 1 },
+        customerSupport: { enabled: false, price: 10, quantity: 1 }
+      },
+      marginTab: 'rupee',
+      marginEnabled: false,
+      marginRupee: 40,
+      marginPercent: 0,
+      totalUsers: 10
+    };
+
+    const els = {
+      configTableWrap: document.getElementById('configTableWrap'),
+      componentSelectGrid: document.getElementById('componentSelectGrid'),
+      previewTableWrap: document.getElementById('previewTableWrap'),
+      previewEmpty: document.getElementById('previewEmpty'),
+      marginTabs: document.getElementById('marginTabs'),
+      marginInput: document.getElementById('marginInput'),
+      marginEnabledToggle: document.getElementById('marginEnabledToggle'),
+      marginConfigWrap: document.getElementById('marginConfigWrap'),
+      breakdownBody: document.getElementById('breakdownBody')
+    };
+
+    function formatRupee(amount, decimals) {
+      if (decimals === undefined) decimals = Number.isInteger(amount) ? 0 : 2;
+      return '₹' + amount.toLocaleString('en-IN', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+    }
+
+    function componentLineCost(key, setting) {
+      if (!setting.enabled) return 0;
+      const users = Math.max(1, state.totalUsers);
+      switch (key) {
+        case 'parsing':
+          return setting.quantity * setting.price;
+        case 'bulkEmail': {
+          const total = setting.quantity * setting.price;
+          if (setting.distribution === 'overall') {
+            return total / users;
+          }
+          return total;
+        }
+        case 'aiFeatures': {
+          if (setting.distribution === 'overall') {
+            return setting.price / users;
+          }
+          return setting.price;
+        }
+        case 'xraySearch':
+        case 'infra':
+        case 'customerSupport':
+          return setting.price;
+        default:
+          return setting.quantity * setting.price;
+      }
+    }
+
+    function calcCosts(components) {
+      const c = components;
+      const parsingCost = componentLineCost('parsing', c.parsing);
+      const aiCost = componentLineCost('aiFeatures', c.aiFeatures);
+      const bulkEmailCost = componentLineCost('bulkEmail', c.bulkEmail);
+      const xraySearchCost = componentLineCost('xraySearch', c.xraySearch);
+      const infraCost = componentLineCost('infra', c.infra);
+      const customerSupportCost = componentLineCost('customerSupport', c.customerSupport);
+      const variableCost = parsingCost + aiCost + bulkEmailCost + xraySearchCost + infraCost + customerSupportCost;
+      return { parsingCost, aiCost, bulkEmailCost, xraySearchCost, infraCost, customerSupportCost, variableCost };
+    }
+
+    function distributionNote(setting) {
+      if (setting.distribution !== 'overall') return '';
+      return ' (÷ ' + Math.max(1, state.totalUsers) + ' users)';
+    }
+
+    function getBreakdownLabel(key, setting) {
+      const meta = COMPONENT_META[key];
+      if (!setting.enabled) return meta.label;
+      const dist = distributionNote(setting);
+      if (key === 'parsing') return 'Parsing (' + setting.quantity + ' CVs × ' + formatRupee(setting.price, 2) + ')';
+      if (key === 'bulkEmail') return 'Bulk Email (' + setting.quantity.toLocaleString('en-IN') + ' × ₹' + setting.price + dist + ')';
+      if (key === 'aiFeatures') return 'AI Features (₹' + setting.price + ' credit' + dist + ')';
+      return meta.label;
+    }
+
+    function calcSellPrice(variableCost, marginRupee) { return variableCost + marginRupee; }
+    function calcGrossMarginPct(sellPrice, variableCost) {
+      if (sellPrice <= 0) return 0;
+      return ((sellPrice - variableCost) / sellPrice) * 100;
+    }
+    function rupeeToMarginPercent(variableCost, marginRupee) {
+      return calcGrossMarginPct(calcSellPrice(variableCost, marginRupee), variableCost);
+    }
+    function marginPercentToRupee(variableCost, marginPercent) {
+      if (marginPercent >= 100) return variableCost * 10;
+      const sellPrice = variableCost / (1 - marginPercent / 100);
+      return sellPrice - variableCost;
+    }
+
+    function syncMarginFromCosts() {
+      const costs = calcCosts(state.components);
+      if (state.marginTab === 'percent') {
+        state.marginRupee = marginPercentToRupee(costs.variableCost, state.marginPercent);
+      } else {
+        state.marginPercent = rupeeToMarginPercent(costs.variableCost, state.marginRupee);
+      }
+    }
+
+    function renderValueCell(key, meta, setting) {
+      if (!meta.hasValue) return '<span class="sheet-na">NA</span>';
+      return '<input type="text" inputmode="numeric" class="sheet-input value-input" data-key="' + key + '" data-field="qty" value="' + setting.quantity + '">';
+    }
+
+    function renderRateCell(key, meta, setting) {
+      const prefix = key !== 'aiFeatures' ? '<span class="sheet-cell-prefix">₹</span>' : '';
+      return '<div class="sheet-inline-value">' + prefix +
+        '<input type="text" inputmode="decimal" class="sheet-input rate-input" data-key="' + key + '" data-field="price" value="' + setting.price + '">' +
+        '<span class="sheet-cell-suffix">' + meta.rateLabel + '</span></div>';
+    }
+
+    function renderDistributionCell(key, meta, setting) {
+      if (!meta.supportsDistribution) return '';
+      const distribution = setting.distribution || 'perUser';
+      return '<div class="distribution-cell">' +
+        '<select class="sheet-select distribution-select" data-key="' + key + '" data-field="distribution">' +
+        '<option value="perUser"' + (distribution === 'perUser' ? ' selected' : '') + '>Per user basis</option>' +
+        '<option value="overall"' + (distribution === 'overall' ? ' selected' : '') + '>Overall</option>' +
+        '</select></div>';
+    }
+
+    function renderTotalUsersRow() {
+      return '<div class="total-users-row">' +
+        '<span class="total-users-label">Total Users</span>' +
+        '<input type="text" inputmode="numeric" class="sheet-input total-users-input" data-field="totalUsers" value="' + state.totalUsers + '">' +
+        '</div>';
+    }
+
+    function renderConfigTable() {
+      const enabledKeys = COMPONENT_ORDER.filter(k => state.components[k].enabled);
+
+      const tableHtml = enabledKeys.length === 0
+        ? '<div class="quantity-empty">No components added yet. Use the buttons below to add items.</div>'
+        : (function() {
+          const rows = enabledKeys.map(key => {
+            const meta = COMPONENT_META[key];
+            const setting = state.components[key];
+
+            let html = '<tr class="config-row" data-component="' + key + '">' +
+              '<td class="config-component">' + meta.label + '</td>' +
+              '<td class="config-value">' + renderValueCell(key, meta, setting) + '</td>' +
+              '<td class="config-rate">' + renderRateCell(key, meta, setting) + '</td>' +
+              '<td class="config-distribution">' + renderDistributionCell(key, meta, setting) + '</td>' +
+              '<td class="sheet-action-cell"><button type="button" class="component-remove-btn" data-key="' + key + '" aria-label="Remove ' + meta.label + '">×</button></td>' +
+              '</tr>';
+
+            if (key === 'aiFeatures') {
+              html += renderAiSubRows(setting);
+            }
+            return html;
+          }).join('');
+
+          return '<table class="sheet-table config-spreadsheet">' +
+            '<thead><tr><th>Component</th><th>Value</th><th>Rate</th><th>Distribution</th><th></th></tr></thead>' +
+            '<tbody>' + rows + '</tbody></table>';
+        })();
+
+      els.configTableWrap.innerHTML =
+        '<div class="config-table-wrap">' + renderTotalUsersRow() + tableHtml + '</div>';
+    }
+
+    function showToast(message) {
+      const toast = document.getElementById('appToast');
+      if (!toast) return;
+      toast.textContent = message;
+      toast.classList.add('is-visible');
+      clearTimeout(showToast._timer);
+      showToast._timer = setTimeout(function() {
+        toast.classList.remove('is-visible');
+      }, 4000);
+    }
+
+    function renderComponentSelector() {
+      const availableKeys = COMPONENT_ORDER.filter(k => !state.components[k].enabled);
+      if (availableKeys.length === 0) {
+        els.componentSelectGrid.innerHTML = '<div class="select-empty">All components added.</div>';
+        return;
+      }
+      els.componentSelectGrid.innerHTML = availableKeys.map(key => {
+        const meta = COMPONENT_META[key];
+        const unavailable = meta.addable === false;
+        return '<button type="button" class="component-add-card' + (unavailable ? ' is-unavailable' : '') + '" data-key="' + key + '"' + (unavailable ? ' aria-disabled="true"' : '') + '>' +
+          '<span class="component-add-icon" aria-hidden="true">+</span>' +
+          '<span class="component-select-label">' + meta.label + '</span>' +
+          '<span class="component-select-helper">' + meta.helper + '</span></button>';
+      }).join('');
+    }
+
+    document.querySelector('main').addEventListener('click', e => {
+      const addBtn = e.target.closest('.component-add-card');
+      if (addBtn && addBtn.dataset.key) {
+        const key = addBtn.dataset.key;
+        const meta = COMPONENT_META[key];
+        if (meta && meta.addable === false) {
+          showToast(meta.unavailableMessage || 'This component is in development and cannot be added yet.');
+          return;
+        }
+        setComponentEnabled(key, true);
+        return;
+      }
+      const removeBtn = e.target.closest('.component-remove-btn');
+      if (removeBtn && removeBtn.dataset.key) {
+        setComponentEnabled(removeBtn.dataset.key, false);
+      }
+    });
+
+    els.configTableWrap.addEventListener('input', e => {
+      const el = e.target;
+      const field = el.dataset.field;
+
+      if (field === 'totalUsers') {
+        if (el.value === '') {
+          renderPreview();
+          return;
+        }
+        const val = parseInt(el.value, 10);
+        if (isNaN(val) || val < 1) return;
+        state.totalUsers = val;
+        syncMarginFromCosts();
+        renderConfigTable();
+        renderPreview();
+        return;
+      }
+
+      const key = el.dataset.key;
+      if (!key || !state.components[key]) return;
+
+      if (field === 'price') {
+        if (el.value === '' || el.value.endsWith('.')) {
+          if (key === 'aiFeatures') updateAiSearchCountDisplay();
+          renderPreview();
+          return;
+        }
+        const val = parseFloat(el.value);
+        if (isNaN(val) || val < 0) return;
+        state.components[key].price = val;
+        if (key === 'aiFeatures') updateAiSearchCountDisplay();
+      } else if (field === 'qty') {
+        if (el.value === '') {
+          renderPreview();
+          return;
+        }
+        const val = parseInt(el.value, 10);
+        const min = COMPONENT_META[key].valueMin || 1;
+        if (isNaN(val) || val < min) return;
+        state.components[key].quantity = val;
+      }
+      syncMarginFromCosts();
+      renderPreview();
+    });
+
+    els.configTableWrap.addEventListener('blur', e => {
+      const el = e.target;
+      if (!el.classList.contains('sheet-input')) return;
+      const field = el.dataset.field;
+
+      if (field === 'totalUsers') {
+        const val = parseInt(el.value, 10);
+        if (el.value === '' || isNaN(val) || val < 1) {
+          el.value = state.totalUsers;
+        } else {
+          state.totalUsers = val;
+          el.value = val;
+        }
+        syncMarginFromCosts();
+        renderConfigTable();
+        renderPreview();
+        return;
+      }
+
+      const key = el.dataset.key;
+      if (!key || !field || !state.components[key]) return;
+
+      if (field === 'price') {
+        const val = parseFloat(el.value);
+        if (el.value === '' || isNaN(val) || val < 0) {
+          el.value = state.components[key].price;
+        } else {
+          state.components[key].price = val;
+          el.value = val;
+        }
+      } else if (field === 'qty') {
+        const min = COMPONENT_META[key].valueMin || 1;
+        const val = parseInt(el.value, 10);
+        if (el.value === '' || isNaN(val) || val < min) {
+          el.value = state.components[key].quantity;
+        } else {
+          state.components[key].quantity = val;
+          el.value = val;
+        }
+      }
+      syncMarginFromCosts();
+      renderPreview();
+    }, true);
+
+    els.configTableWrap.addEventListener('change', e => {
+      const el = e.target;
+      if (el.classList.contains('ai-sub-checkbox')) {
+        const subId = el.dataset.aiSubId;
+        const ai = state.components.aiFeatures;
+        if (!subId || !ai) return;
+        ai.aiSubFeatures = normalizeAiSubFeatures(ai.aiSubFeatures);
+        if (!el.checked && countEnabledAiSubFeatures(ai.aiSubFeatures) <= 1) {
+          el.checked = true;
+          return;
+        }
+        ai.aiSubFeatures[subId] = el.checked;
+        renderConfigTable();
+        return;
+      }
+      if (!el.classList.contains('distribution-select')) return;
+      const key = el.dataset.key;
+      if (!key || !state.components[key]) return;
+      state.components[key].distribution = el.value;
+      syncMarginFromCosts();
+      renderConfigTable();
+      renderPreview();
+    });
+
+    function setComponentEnabled(key, enabled) {
+      if (!state.components[key]) return;
+      state.components[key].enabled = enabled;
+      syncMarginFromCosts();
+      renderPanels();
+      renderPreview();
+    }
+
+    function renderPanels() {
+      renderConfigTable();
+      renderComponentSelector();
+    }
+
+    function getEffectiveMarginRupee() {
+      return state.marginEnabled ? state.marginRupee : 0;
+    }
+
+    function renderPreview() {
+      const costs = calcCosts(state.components);
+      const sellPrice = calcSellPrice(costs.variableCost, getEffectiveMarginRupee());
+
+      const enabledKeys = COMPONENT_ORDER.filter(k => state.components[k].enabled);
+      const hasPreview = enabledKeys.length > 0;
+      els.previewTableWrap.style.display = hasPreview ? '' : 'none';
+      els.previewEmpty.style.display = hasPreview ? 'none' : '';
+
+      if (hasPreview) {
+        els.breakdownBody.innerHTML = enabledKeys.map(key => {
+          const setting = state.components[key];
+          const label = getBreakdownLabel(key, setting);
+          const cost = componentLineCost(key, setting);
+          return '<tr><td>' + label + '</td><td>' + formatRupee(cost) + '</td></tr>';
+        }).join('') +
+          '<tr class="row-bold"><td>Variable Cost</td><td>' + formatRupee(costs.variableCost) + '</td></tr>' +
+          (state.marginEnabled ? '<tr><td>Your Margin</td><td>' + formatRupee(state.marginRupee) + '</td></tr>' : '') +
+          '<tr class="row-sell"><td>Sell Price</td><td>' + formatRupee(sellPrice) + '</td></tr>';
+      }
+    }
+
+    els.marginEnabledToggle.addEventListener('change', () => {
+      state.marginEnabled = els.marginEnabledToggle.checked;
+      els.marginConfigWrap.style.display = state.marginEnabled ? '' : 'none';
+      renderPreview();
+    });
+
+    els.marginTabs.addEventListener('click', e => {
+      const btn = e.target.closest('.tab-btn');
+      if (!btn || btn.dataset.tab === state.marginTab) return;
+      const costs = calcCosts(state.components);
+      els.marginTabs.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === btn.dataset.tab));
+      state.marginTab = btn.dataset.tab;
+      if (state.marginTab === 'percent') {
+        state.marginPercent = rupeeToMarginPercent(costs.variableCost, state.marginRupee);
+        els.marginInput.value = state.marginPercent.toFixed(1);
+        els.marginInput.step = '0.1';
+      } else {
+        els.marginInput.value = Math.round(state.marginRupee);
+        els.marginInput.step = '1';
+      }
+    });
+
+    els.marginInput.addEventListener('input', () => {
+      const val = parseFloat(els.marginInput.value);
+      if (isNaN(val) || val < 0) return;
+      const costs = calcCosts(state.components);
+      if (state.marginTab === 'percent') {
+        state.marginPercent = Math.min(val, 99.9);
+        state.marginRupee = marginPercentToRupee(costs.variableCost, state.marginPercent);
+      } else {
+        state.marginRupee = val;
+        state.marginPercent = rupeeToMarginPercent(costs.variableCost, state.marginRupee);
+      }
+      renderPreview();
+    });
+
+    (function init() {
+      syncMarginFromCosts();
+      renderPanels();
+      renderPreview();
+    })();
+  </script>
+</body>
+</html>
