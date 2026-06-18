@@ -254,7 +254,7 @@
     }
 
     const COMPONENT_META = {
-      parsing: { label: 'Parsing', helper: 'CV parsing volume × rate per CV', hasValue: true, valueMin: 50, valueStep: 10, rateLabel: 'per/CV', rateStep: 0.01, supportsDistribution: false },
+      parsing: { label: 'Parsing', helper: 'CV parsing volume × rate per CV', hasValue: true, valueMin: 1, valueStep: 10, rateLabel: 'per/CV', rateStep: 0.01, supportsDistribution: false },
       aiFeatures: { label: 'AI Features', helper: 'JD Generation, AI Search, Conversational AI', hasValue: false, rateLabel: 'Rs Credit', rateStep: 1, supportsDistribution: true },
       bulkEmail: { label: 'Bulk Email', helper: 'Email volume × rate per email', hasValue: true, valueMin: 1, valueStep: 100, rateLabel: 'per/email', rateStep: 0.001, supportsDistribution: true },
       xraySearch: { label: 'X-ray Search', helper: 'LinkedIn & profile enrichment search', hasValue: false, rateLabel: 'Per User', rateStep: 1, supportsDistribution: false, addable: false, unavailableMessage: 'X-ray Search is in development. Per search price is not defined yet.' },

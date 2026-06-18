@@ -56,7 +56,8 @@ function SheetNumericInput({
   const tryCommit = (raw: string) => {
     if (raw.endsWith(".")) return;
     const val = parseRaw(raw);
-    if (val === null || val < min) return;
+    if (val === null) return;
+    if (val < min) return;
     onCommit(val);
   };
 

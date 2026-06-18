@@ -272,7 +272,7 @@ export const COMPONENT_META: Record<ComponentKey, ComponentMeta> = {
     label: "Parsing",
     helper: "CV parsing volume × rate per CV",
     hasValue: true,
-    valueMin: 50,
+    valueMin: 1,
     valueStep: 10,
     rateLabel: "per/CV",
     rateStep: 0.01,
